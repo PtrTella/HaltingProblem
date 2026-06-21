@@ -158,8 +158,8 @@ def train(epochs=100):
         # Checkpointing del modello basato sulla validation loss
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), "best_halting_model.pth")
-            print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f}")
+            torch.save(model.state_dict(), "runs/best_halting_model.pth")
+            print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f} to runs/")
 
         # Logging visivo dello spazio latente (1 batch di validation, ogni 5 epoche)
         if epoch % 5 == 0:
@@ -174,7 +174,7 @@ def train(epochs=100):
                 writer.add_image("Latent_PCA", img, epoch)
 
     writer.close()
-    print("Training completato. Pesi migliori salvati in 'best_halting_model.pth'.")
+    print("Training completato. Pesi migliori salvati in 'runs/best_halting_model.pth'.")
     print("Esegui 'tensorboard --logdir=runs' per visualizzare.")
 
 

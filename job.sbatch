@@ -5,8 +5,8 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=31G
-#SBATCH --partition=l40 
-#SBATCH --output=training_halting.log
+#SBATCH --partition=l40
+#SBATCH --output=runs/training_halting.log
 #SBATCH --chdir=/scratch.hpc/pietro.tellarini2/HaltingProblem
 #SBATCH --gres=gpu:1
 
