@@ -47,14 +47,16 @@ def train(epochs=100):
     solver_method = "euler" if device.type == "cpu" else "dopri5"
     batch_size = 1024 if device.type == "cuda" else 256
 
-    print(f"Loading dataset and splitting 80/20 train/val...")
+    print("Loading dataset and splitting 80/20 train/val...")
     df = pd.read_parquet("halting_dataset.parquet")
 
     # Split train/validation
     train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
 
     # Preparazione tensori train
-    train_programs = torch.tensor(np.stack(train_df["program"].values), dtype=torch.long)
+    train_programs = torch.tensor(
+        np.stack(train_df["program"].values), dtype=torch.long
+    )
     train_labels = torch.tensor(train_df["label"].values, dtype=torch.float32)
     train_regs = torch.zeros((len(train_df), 2), dtype=torch.float32)
 
@@ -72,10 +74,10 @@ def train(epochs=100):
     # Aumento capacità (embed_dim=32, latent_dim=256) per sfruttare i 48GB di VRAM
     model = ContinuousHaltingModel(embed_dim=32, latent_dim=256).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    
+
     # Cosine Annealing Learning Rate Scheduler per gestire la stiffness
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-    
+
     t_span = torch.tensor([0.0, 1.0]).to(device)
     writer = SummaryWriter("runs/halting_poc")
 
@@ -102,7 +104,7 @@ def train(epochs=100):
             # Forza l'allineamento del coseno con moltiplicatore aumentato a 0.5 per traiettorie più rettilinee
             loss_align = (batch_y * (1.0 - cos_sim)).mean()
             loss = loss_bce + 0.5 * loss_align
-            
+
             loss.backward()
             optimizer.step()
 
@@ -115,7 +117,7 @@ def train(epochs=100):
         # --- Fase di Validazione ---
         model.eval()
         total_val_loss, total_val_cos = 0.0, 0.0
-        
+
         with torch.no_grad():
             for batch_prog, batch_reg, batch_y in val_loader:
                 batch_prog, batch_reg, batch_y = (
@@ -135,7 +137,7 @@ def train(epochs=100):
 
         avg_val_loss = total_val_loss / len(val_loader)
         avg_val_cos = total_val_cos / len(val_loader)
-        
+
         # Step dello scheduler
         scheduler.step()
 
@@ -156,7 +158,7 @@ def train(epochs=100):
         # Checkpointing del modello basato sulla validation loss
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), 'best_halting_model.pth')
+            torch.save(model.state_dict(), "best_halting_model.pth")
             print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f}")
 
         # Logging visivo dello spazio latente (1 batch di validation, ogni 5 epoche)
@@ -178,7 +180,13 @@ def train(epochs=100):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Continuous Halting PoC: Train")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train (default: 100)")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=100,
+        help="Number of epochs to train (default: 100)",
+    )
     args = parser.parse_args()
     train(epochs=args.epochs)
