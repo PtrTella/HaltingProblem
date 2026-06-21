@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import io
 from PIL import Image
@@ -35,35 +36,54 @@ def plot_latent_space_pca(z_matrix, labels):
     return tensor_img
 
 
-def train():
+def train(epochs=100):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Executing on: {device}")
 
     # Parametri operativi (euler in locale, dopri5 sul cluster)
     solver_method = "euler" if device.type == "cpu" else "dopri5"
+    batch_size = 1024 if device.type == "cuda" else 256
 
+    print(f"Loading dataset and splitting 80/20 train/val...")
     df = pd.read_parquet("halting_dataset.parquet")
 
-    # Preparazione tensori
-    programs = torch.tensor(np.stack(df["program"].values), dtype=torch.long)
-    labels = torch.tensor(df["label"].values, dtype=torch.float32)
-    registers_init = torch.zeros((len(df), 2), dtype=torch.float32)
+    # Split train/validation
+    train_df, val_df = train_test_split(df, test_size=0.2, random_state=42)
 
-    dataset = TensorDataset(programs, registers_init, labels)
-    loader = DataLoader(dataset, batch_size=256, shuffle=True)
+    # Preparazione tensori train
+    train_programs = torch.tensor(np.stack(train_df["program"].values), dtype=torch.long)
+    train_labels = torch.tensor(train_df["label"].values, dtype=torch.float32)
+    train_regs = torch.zeros((len(train_df), 2), dtype=torch.float32)
 
-    model = ContinuousHaltingModel().to(device)
+    # Preparazione tensori validation
+    val_programs = torch.tensor(np.stack(val_df["program"].values), dtype=torch.long)
+    val_labels = torch.tensor(val_df["label"].values, dtype=torch.float32)
+    val_regs = torch.zeros((len(val_df), 2), dtype=torch.float32)
+
+    train_dataset = TensorDataset(train_programs, train_regs, train_labels)
+    val_dataset = TensorDataset(val_programs, val_regs, val_labels)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    # Aumento capacità (embed_dim=32, latent_dim=256) per sfruttare i 48GB di VRAM
+    model = ContinuousHaltingModel(embed_dim=32, latent_dim=256).to(device)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    
+    # Cosine Annealing Learning Rate Scheduler per gestire la stiffness
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+    
     t_span = torch.tensor([0.0, 1.0]).to(device)
-
     writer = SummaryWriter("runs/halting_poc")
 
-    epochs = 10
-    for epoch in range(epochs):
-        model.train()
-        total_loss, total_cos = 0, 0
+    best_val_loss = float("inf")
 
-        for batch_prog, batch_reg, batch_y in loader:
+    for epoch in range(epochs):
+        # --- Fase di Training ---
+        model.train()
+        total_train_loss, total_train_cos = 0.0, 0.0
+
+        for batch_prog, batch_reg, batch_y in train_loader:
             batch_prog, batch_reg, batch_y = (
                 batch_prog.to(device),
                 batch_reg.to(device),
@@ -75,34 +95,72 @@ def train():
                 batch_prog, batch_reg, t_span, method=solver_method
             )
 
-            # Loss principale (BCE)
             loss_bce = F.binary_cross_entropy_with_logits(logits, batch_y)
-
-            # Penalità per forzare l'allineamento del coseno sui programmi che si fermano (y=1)
-            # Vogliamo cos_sim -> 1 per i programmi che terminano.
+            # Forza l'allineamento del coseno con moltiplicatore aumentato a 0.5 per traiettorie più rettilinee
             loss_align = (batch_y * (1.0 - cos_sim)).mean()
-
-            loss = loss_bce + 0.1 * loss_align
+            loss = loss_bce + 0.5 * loss_align
+            
             loss.backward()
             optimizer.step()
 
-            total_loss += loss.item()
-            total_cos += cos_sim.mean().item()
+            total_train_loss += loss.item()
+            total_train_cos += cos_sim.mean().item()
 
-        avg_loss = total_loss / len(loader)
-        avg_cos = total_cos / len(loader)
+        avg_train_loss = total_train_loss / len(train_loader)
+        avg_train_cos = total_train_cos / len(train_loader)
+
+        # --- Fase di Validazione ---
+        model.eval()
+        total_val_loss, total_val_cos = 0.0, 0.0
+        
+        with torch.no_grad():
+            for batch_prog, batch_reg, batch_y in val_loader:
+                batch_prog, batch_reg, batch_y = (
+                    batch_prog.to(device),
+                    batch_reg.to(device),
+                    batch_y.to(device),
+                )
+                logits, _, cos_sim = model(
+                    batch_prog, batch_reg, t_span, method=solver_method
+                )
+                loss_bce = F.binary_cross_entropy_with_logits(logits, batch_y)
+                loss_align = (batch_y * (1.0 - cos_sim)).mean()
+                loss = loss_bce + 0.5 * loss_align
+
+                total_val_loss += loss.item()
+                total_val_cos += cos_sim.mean().item()
+
+        avg_val_loss = total_val_loss / len(val_loader)
+        avg_val_cos = total_val_cos / len(val_loader)
+        
+        # Step dello scheduler
+        scheduler.step()
+
         print(
-            f"Epoch {epoch + 1} | Loss: {avg_loss:.4f} | Avg Cosine Align: {avg_cos:.4f}"
+            f"Epoch {epoch + 1:3d}/{epochs} | "
+            f"Train Loss: {avg_train_loss:.4f} (Cos: {avg_train_cos:.4f}) | "
+            f"Val Loss: {avg_val_loss:.4f} (Cos: {avg_val_cos:.4f}) | "
+            f"LR: {scheduler.get_last_lr()[0]:.6f}"
         )
 
-        writer.add_scalar("Training/Loss", avg_loss, epoch)
-        writer.add_scalar("Metrics/CosineAlignment", avg_cos, epoch)
+        # Log metriche su TensorBoard
+        writer.add_scalar("Loss/Train", avg_train_loss, epoch)
+        writer.add_scalar("Loss/Val", avg_val_loss, epoch)
+        writer.add_scalar("Metrics/Train_CosineAlignment", avg_train_cos, epoch)
+        writer.add_scalar("Metrics/Val_CosineAlignment", avg_val_cos, epoch)
+        writer.add_scalar("Params/LearningRate", scheduler.get_last_lr()[0], epoch)
 
-        # Logging visivo dello spazio latente (1 batch di test)
-        if epoch % 2 == 0:
+        # Checkpointing del modello basato sulla validation loss
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), 'best_halting_model.pth')
+            print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f}")
+
+        # Logging visivo dello spazio latente (1 batch di validation, ogni 5 epoche)
+        if epoch % 5 == 0:
             model.eval()
             with torch.no_grad():
-                sample_prog, sample_reg, sample_y = next(iter(loader))
+                sample_prog, sample_reg, sample_y = next(iter(val_loader))
                 sample_prog, sample_reg = sample_prog.to(device), sample_reg.to(device)
                 _, trajectory, _ = model(
                     sample_prog, sample_reg, t_span, method=solver_method
@@ -111,8 +169,13 @@ def train():
                 writer.add_image("Latent_PCA", img, epoch)
 
     writer.close()
-    print("Training completato. Esegui 'tensorboard --logdir=runs' per visualizzare.")
+    print("Training completato. Pesi migliori salvati in 'best_halting_model.pth'.")
+    print("Esegui 'tensorboard --logdir=runs' per visualizzare.")
 
 
 if __name__ == "__main__":
-    train()
+    import argparse
+    parser = argparse.ArgumentParser(description="Continuous Halting PoC: Train")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train (default: 100)")
+    args = parser.parse_args()
+    train(epochs=args.epochs)
