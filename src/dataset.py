@@ -6,7 +6,10 @@ import multiprocessing
 import random
 import time
 import pandas as pd
-from src.interpreter import inst_to_token, token_to_inst, execute_program
+try:
+    from src.interpreter import inst_to_token, token_to_inst, execute_program
+except ImportError:
+    from interpreter import inst_to_token, token_to_inst, execute_program
 
 def get_all_instructions(N):
     """Returns all valid instructions for a program of length N."""
@@ -124,3 +127,33 @@ def run_dataset_generation(max_perm_len=4, sample_size=20000, output_path="halti
     print(f"\nSaving dataset to {output_path}...")
     df_balanced.to_parquet(output_path, index=False)
     print("Dataset generation complete!")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Continuous Halting PoC: Dataset Generator")
+    parser.add_argument(
+        "--max-perm-len",
+        type=int,
+        default=4,
+        help="Maximum program length to generate all permutations for (default: 4)"
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=20000,
+        help="Number of random programs to sample for each length N > max-perm-len (default: 20000)"
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="halting_dataset.parquet",
+        help="Filename for the generated Parquet file (default: halting_dataset.parquet)"
+    )
+    args = parser.parse_args()
+    
+    run_dataset_generation(
+        max_perm_len=args.max_perm_len,
+        sample_size=args.sample_size,
+        output_path=args.output
+    )

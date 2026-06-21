@@ -12,7 +12,10 @@ import io
 from PIL import Image
 import torchvision.transforms as transforms
 
-from src.model import ContinuousHaltingModel
+try:
+    from src.model import ContinuousHaltingModel
+except ImportError:
+    from model import ContinuousHaltingModel
 
 
 def plot_latent_space_pca(z_matrix, labels):
