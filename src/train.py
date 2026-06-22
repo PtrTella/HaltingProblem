@@ -39,7 +39,7 @@ def plot_latent_space_pca(z_matrix, labels):
     return tensor_img
 
 
-def train(epochs=100):
+def train(epochs=100, patience=15):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Executing on: {device}")
 
@@ -82,6 +82,7 @@ def train(epochs=100):
     writer = SummaryWriter("runs/halting_poc")
 
     best_val_loss = float("inf")
+    patience_counter = 0
 
     for epoch in range(epochs):
         # --- Fase di Training ---
@@ -155,11 +156,17 @@ def train(epochs=100):
         writer.add_scalar("Metrics/Val_CosineAlignment", avg_val_cos, epoch)
         writer.add_scalar("Params/LearningRate", scheduler.get_last_lr()[0], epoch)
 
-        # Checkpointing del modello basato sulla validation loss
+        # Checkpointing del modello basato sulla validation loss ed Early Stopping
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
+            patience_counter = 0
             torch.save(model.state_dict(), "runs/best_halting_model.pth")
             print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f} to runs/")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping triggered. No improvement in validation loss for {patience} epochs.")
+                break
 
         # Logging visivo dello spazio latente (1 batch di validation, ogni 5 epoche)
         if epoch % 5 == 0:
@@ -188,5 +195,11 @@ if __name__ == "__main__":
         default=100,
         help="Number of epochs to train (default: 100)",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=15,
+        help="Number of epochs to wait for improvement before early stopping (default: 15)",
+    )
     args = parser.parse_args()
-    train(epochs=args.epochs)
+    train(epochs=args.epochs, patience=args.patience)

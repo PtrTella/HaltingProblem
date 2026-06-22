@@ -23,9 +23,9 @@ class ContinuousHaltingModel(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
 
-        # Proiezione z(0): embedding del codice + 2 registri (R0, R1)
+        # Proiezione z(0): embedding del codice + 2 registri (R0, R1) + 2 Zero Flags (ALU Emulation)
         self.project_in = nn.Sequential(
-            nn.Linear(seq_len * embed_dim + 2, latent_dim), nn.SiLU()
+            nn.Linear(seq_len * embed_dim + 4, latent_dim), nn.SiLU()
         )
 
         self.ode_func = ODEFunc(latent_dim)
@@ -40,8 +40,11 @@ class ContinuousHaltingModel(nn.Module):
         # 1. Embedding iniziale
         embedded_code = self.embedding(code_tokens).view(batch_size, -1)
 
-        # 2. Stato iniziale z(0)
-        z0_input = torch.cat([embedded_code, registers], dim=-1)
+        # ALU Hardware Emulation: Calculate Zero Flags
+        zero_flags = (registers == 0.0).float()
+
+        # 2. Stato iniziale z(0) (Code + Registers + Zero Flags)
+        z0_input = torch.cat([embedded_code, registers, zero_flags], dim=-1)
         z0 = self.project_in(z0_input)
 
         # 3. Evoluzione continua tramite ODE

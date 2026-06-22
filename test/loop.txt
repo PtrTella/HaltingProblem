@@ -1,0 +1,2 @@
+INC R0
+JNZ R0 0

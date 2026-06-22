@@ -1,0 +1,3 @@
+DEC R0
+JNZ R0 0
+HLT
