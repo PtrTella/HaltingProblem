@@ -14,3 +14,4 @@ matplotlib
 tensorboard
 torchdiffeq
 transformers
+torch-geometric
