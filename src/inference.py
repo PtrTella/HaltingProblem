@@ -60,6 +60,26 @@ def program_to_tokens(program_str_list, max_len=8):
     return tokens
 
 
+def get_latest_checkpoint_path(runs_dir="runs"):
+    """Cerca la cartella run_ più recente e restituisce il percorso del checkpoint."""
+    if not os.path.exists(runs_dir):
+        return None
+    subdirs = [
+        os.path.join(runs_dir, d) for d in os.listdir(runs_dir)
+        if os.path.isdir(os.path.join(runs_dir, d)) and d.startswith("run_")
+    ]
+    if not subdirs:
+        return None
+    # Ordina in base al nome (funziona cronologicamente grazie al formato run_YYYYMMDD_HHMMSS)
+    subdirs.sort()
+    latest_dir = subdirs[-1]
+    checkpoint_path = os.path.join(latest_dir, "best_halting_model.pth")
+    if os.path.exists(checkpoint_path):
+        return checkpoint_path
+    return None
+
+
+
 def main():
     import argparse
 
@@ -84,6 +104,12 @@ def main():
         type=float,
         default=0.0,
         help="Initial value of register R1 (default: 0.0)",
+    )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="runs/best_halting_model.pth",
+        help="Path to the model weights (default: runs/best_halting_model.pth)",
     )
     args = parser.parse_args()
 
@@ -111,10 +137,17 @@ def main():
     device = torch.device("cpu")
     model = ContinuousHaltingModel(embed_dim=32, latent_dim=256).to(device)
 
-    checkpoint_paths = ["runs/best_halting_model.pth", "best_halting_model.pth"]
+    # Cerca la run più recente o usa il fallback
+    latest_run_path = get_latest_checkpoint_path()
+    checkpoint_paths = [
+        args.weights if args.weights != "runs/best_halting_model.pth" else None,
+        latest_run_path,
+        "runs/best_halting_model.pth",
+        "best_halting_model.pth"
+    ]
     loaded = False
     for path in checkpoint_paths:
-        if os.path.exists(path):
+        if path and os.path.exists(path):
             model.load_state_dict(torch.load(path, map_location=device))
             print(f"Loaded model weights from: {path}")
             loaded = True

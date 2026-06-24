@@ -9,8 +9,11 @@ from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import io
+import os
+import datetime
 from PIL import Image
 import torchvision.transforms as transforms
+
 
 try:
     from src.model import ContinuousHaltingModel
@@ -79,7 +82,13 @@ def train(epochs=100, patience=15):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     t_span = torch.tensor([0.0, 1.0]).to(device)
-    writer = SummaryWriter("runs/halting_poc")
+    
+    # Genera un ID run univoco basato sulla data/ora corrente
+    run_id = datetime.datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    run_dir = os.path.join("runs", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    
+    writer = SummaryWriter(log_dir=run_dir)
 
     best_val_loss = float("inf")
     patience_counter = 0
@@ -160,8 +169,12 @@ def train(epochs=100, patience=15):
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             patience_counter = 0
-            torch.save(model.state_dict(), "runs/best_halting_model.pth")
-            print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f} to runs/")
+            
+            # Salva checkpoint specifico della run
+            checkpoint_path = os.path.join(run_dir, "best_halting_model.pth")
+            torch.save(model.state_dict(), checkpoint_path)
+            
+            print(f"--> Saved best model checkpoint with Val Loss {best_val_loss:.4f} to {checkpoint_path}")
         else:
             patience_counter += 1
             if patience_counter >= patience:
@@ -181,7 +194,7 @@ def train(epochs=100, patience=15):
                 writer.add_image("Latent_PCA", img, epoch)
 
     writer.close()
-    print("Training completato. Pesi migliori salvati in 'runs/best_halting_model.pth'.")
+    print(f"Training completato. Pesi migliori salvati in '{os.path.join(run_dir, 'best_halting_model.pth')}'.")
     print("Esegui 'tensorboard --logdir=runs' per visualizzare.")
 
 
